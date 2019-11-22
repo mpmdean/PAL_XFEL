@@ -126,13 +126,27 @@ out_folder = '/xfel/ffs/dat/ue_191123_FXS/reduced'
 
 def write_data(run_no, point_no, 
                df_on, df_off, image_on, image_off,
-              scan_no=1, out_folder=out_folder):
-
-    path_on = os.path.join(out_folder, 'run={:03d}_scan={:03d}_on.h5'.format(run_no, scan_no))
-    path_off = os.path.join(out_folder, 'run={:03d}_scan={:03d}_off.h5'.format(run_no, scan_no))
-
-    for df, path in zip([df_on, df_off], [path_on, path_off]):
-        f = h5py.File(path)
+              out_folder=out_folder, scan_no=1):
+    path = os.path.join(out_folder, 'run={:03d}'.format(run_no),
+                       'scan={:03d}'.format(scan_no))
+    if not os.path.exists(path):
+        os.makedirs(path)
+    
+    path_on = os.path.join(out_folder, 'run={:03d}'.format(run_no),
+                           'scan={:03d}'.format(scan_no),
+                           'p{:04d}_on.h5'.format(point_no))
+    if os.path.exists(path_on):
+        os.remove(path_on)
+    f_on = h5py.File(path_on)
+    
+    path_off = os.path.join(out_folder, 'run={:03d}'.format(run_no),
+                           'scan={:03d}'.format(scan_no),
+                           'p{:04d}_off.h5'.format(point_no))
+    if os.path.exists(path_off):
+        os.remove(path_off)
+    f_off = h5py.File(path_off)
+    
+    for df, image, f in zip([df_on, df_off], [image_on, image_off], [f_on, f_off]):
         for key in df.keys():
             if key in list(qbpm.keys()) + list(mpccd.keys()):
                 val = np.nansum(df[key])
@@ -140,51 +154,34 @@ def write_data(run_no, point_no,
             if key in list(qbpm_pos.keys()) + list(mpccd_pos.keys()) + list(motorKey.keys()):
                 val = np.nanmean(df[key])
                 f.create_dataset('p{:04d}_{}'.format(point_no, key), data=val)
+        try:
+            del f['p{:04d}_image'.format(point_no)]
+        except:
+            pass
+        f.create_dataset('p{:04d}_image'.format(point_no), data=image)
+        f.create_dataset('p{:04d}_timestamp'.format(point_no), data=df.index.values)
+        print("Wrote {}".format(f.filename))
         f.close()
-
-    with h5py.File(path_on, mode='a') as fon:
-        fon.create_dataset('p{:04d}_image'.format(point_no), data=image_on)
-        print("Wrote {}".format(fon.filename))
-        fon.close()
-
-    with h5py.File(path_off, mode='a') as foff:
-        foff.create_dataset('p{:04d}_image'.format(point_no), data=image_off)
-        print("Wrote {}".format(foff.filename))
-        foff.close()
         
-
-def read_write(run_no, point_no, scan_no=1,
-              folder_stem_images=folder_stem_images,
-              file_stem_scalars=file_stem_scalars,
-               out_folder=out_folder):
-               
-    df_on, df_off, image_on, image_off = read_data(run_no, point_no, scan_no=1,
-                                    folder_stem_images=folder_stem_images,
-                                    file_stem_scalars=file_stem_scalars)
-
-    write_data(run_no, point_no, 
-                   df_on, df_off, image_on, image_off,
-                  scan_no=1, out_folder=out_folder)
-    return 1
-
 def read_write_run(run_no, scan_no=1,
               folder_stem_images=folder_stem_images,
               file_stem_scalars=file_stem_scalars,
                out_folder=out_folder, points=None):
+    
+    path_on = os.path.join(out_folder, 'run={:03d}_scan={:03d}_on.h5'.format(run_no, scan_no))
+    f_on = h5py.File(path_on, 'a', libver='latest')
+    path_off = os.path.join(out_folder, 'run={:03d}_scan={:03d}_off.h5'.format(run_no, scan_no))
+    f_off = h5py.File(path_off, 'a', libver='latest')
+    
     if points is None:
         points = get_points(folder_stem_images, run_no, scan_no=scan_no)
     for point_no in points:
         print("point {}".format(point_no))
-        read_write(run_no, point_no, scan_no=scan_no,
-                  folder_stem_images=folder_stem_images,
-                  file_stem_scalars=file_stem_scalars,
-                   out_folder=out_folder)
-
-    path_on = os.path.join(out_folder, 'run={:03d}_scan={:03d}_on.h5'.format(run_no, scan_no))
-    path_off = os.path.join(out_folder, 'run={:03d}_scan={:03d}_off.h5'.format(run_no, scan_no))
-    for path in [path_on, path_off]:
-        f = h5py.File(path)
-        f.create_dataset('points', data=points)
-        keys = [k.encode('utf-8') for k in set([key[6:] for key in f.keys()])]
-        f.create_dataset('keys', data=keys)
+        df_on, df_off, image_on, image_off = read_data(run_no, point_no, scan_no=scan_no,
+                                    folder_stem_images=folder_stem_images,
+                                    file_stem_scalars=file_stem_scalars)
+        
+        write_data(run_no, point_no, 
+               df_on, df_off, image_on, image_off,
+              out_folder=out_folder, scan_no=1)
 
