@@ -74,7 +74,7 @@ mpccd_pos = {
 'roi1-comx': 'detector:eh1:mpccd1:ROI1_stat.center_of_mass.x'
 }
 
-all_keys = {**motorKey, **qbpm, **mpccd, **mpccd_pos}
+all_keys = {**motorKey, **qbpm, **qbpm_pos, **mpccd, **mpccd_pos}
 
 
 #########################################################
@@ -92,11 +92,21 @@ def get_points(folder_stem_images, run_no, scan_no=1):
 
 def read_data(run_no, point_no, scan_no=1,
               folder_stem_images=folder_stem_images,
-              file_stem_scalars=file_stem_scalars):
+              file_stem_scalars=file_stem_scalars,
+             mean_images=True):
 
     f_images = h5file(os.path.join(folder_stem_images.format(run_no, scan_no) + 'p{:04d}.h5'.format(point_no)))
     df_scalars_all = pd.read_hdf(file_stem_scalars.format(run_no, scan_no, point_no))
-    tags = f_images['mpccd1/image/axis1'][()]
+    
+    try:
+        tags = f_images['mpccd1/image/axis1'][()]
+    except NameError:
+        print("No image data!")
+        return None, None, None, None
+    
+    if len(tags) <=1:
+        print("Not enough tags")
+        return None, None, None, None
 
     df_scalars = df_scalars_all.loc[tags]
 
@@ -117,8 +127,13 @@ def read_data(run_no, point_no, scan_no=1,
     #               images[choose_laser_off.values, : :].mean(0))
     #)
     images = f_images['detector/eh1/mpccd1/image/block0_values']
-    image_on = images[choose_laser_on.values, :, :].mean(0)
-    image_off = images[choose_laser_off.values, :, :].mean(0)
+    
+    if mean_images:
+        image_on = images[choose_laser_on.values, :, :].mean(0)
+        image_off = images[choose_laser_off.values, :, :].mean(0)
+    else:
+        image_on = images[choose_laser_on.values, :, :]
+        image_off = images[choose_laser_off.values, :, :]
     
     return df_on, df_off, image_on, image_off
 
@@ -149,7 +164,7 @@ def write_data(run_no, point_no,
     for df, image, f in zip([df_on, df_off], [image_on, image_off], [f_on, f_off]):
         for key in df.keys():
             if key in list(qbpm.keys()) + list(mpccd.keys()):
-                val = np.nansum(df[key])
+                val = np.nanmean(df[key])
                 f.create_dataset('p{:04d}_{}'.format(point_no, key), data=val)
             if key in list(qbpm_pos.keys()) + list(mpccd_pos.keys()) + list(motorKey.keys()):
                 val = np.nanmean(df[key])
@@ -181,7 +196,40 @@ def read_write_run(run_no, scan_no=1,
                                     folder_stem_images=folder_stem_images,
                                     file_stem_scalars=file_stem_scalars)
         
+        if any([obj is None for obj in [df_on, df_off, image_on, image_off]]):
+            continue
+        
         write_data(run_no, point_no, 
                df_on, df_off, image_on, image_off,
-              out_folder=out_folder, scan_no=1)
+              out_folder=out_folder, scan_no=scan_no)
 
+def read_data_raw_names(run_no, point_no, scan_no=1,
+              folder_stem_images=folder_stem_images,
+              file_stem_scalars=file_stem_scalars,
+             mean_images=True):
+
+    f_images = h5file(os.path.join(folder_stem_images.format(run_no, scan_no) + 'p{:04d}.h5'.format(point_no)))
+    df_scalars_all = pd.read_hdf(file_stem_scalars.format(run_no, scan_no, point_no))
+    tags = f_images['mpccd1/image/axis1'][()]
+    
+    if len(tags) <=1:
+        print("Not enough tags")
+        return None, None, None, None
+
+    df_scalars = df_scalars_all.loc[tags]
+
+    choose_laser_on = df_scalars[motorKey['laserStatus']] == True
+    df_on_full_names = df_scalars[choose_laser_on]
+    choose_laser_off = df_scalars[motorKey['laserStatus']] == False
+    df_off_full_names = df_scalars[choose_laser_off]
+
+    images = f_images['detector/eh1/mpccd1/image/block0_values']
+    
+    if mean_images:
+        image_on = images[choose_laser_on.values, :, :].mean(0)
+        image_off = images[choose_laser_off.values, :, :].mean(0)
+    else:
+        image_on = images[choose_laser_on.values, :, :]
+        image_off = images[choose_laser_off.values, :, :]
+    
+    return df_on_full_names, df_off_full_names, image_on, image_off
