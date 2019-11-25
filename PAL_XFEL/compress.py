@@ -5,19 +5,28 @@ import os
 from glob import glob
 import h5py
 from h5file import h5file
-
+import time
 
 #==============================================================================
 # Defining Global variables
 #==============================================================================
 
+min_threshold = 200
+ADU_per_photon = 243
+background_path = '/xfel/ffs/dat/ue_191123_FXS/reduced/background.npy'
+
+
 # Motor nickname dict
 motorKey = {
 'delay': 'delay_input',
-'th': 'th_input', 
+'th_input': 'th_input', 
 'laserStatus': 'event_info.FIFTEEN_HERTZ',
 'laser_h': 'laser_h_input',
-'laser_v': 'laser_v_input'
+'laser_v': 'laser_v_input',
+'gonio_th_rbv': 'gonio:eh1:FourC:th',
+'gonio_tth_rbv': 'gonio:eh1:FourC:tth',
+'chi_rbv': 'gonio:eh1:FourC:chi',
+'phi_rbv': 'gonio:eh1:FourC:phi'
 }
 
 # All the scalars needed
@@ -28,7 +37,7 @@ qbpm = {
 #'pink-ch2': 'qbpm:oh:qbpm1:ch2',
 #'pink-ch3': 'qbpm:oh:qbpm1:ch3',
 #'pink-ch4': 'qbpm:oh:qbpm1:ch4',
-#'pink-sum': 'qbpm:oh:qbpm1:sum',
+'pink-sum': 'qbpm:oh:qbpm1:sum',
 'mono-up-ch1': 'qbpm:oh:qbpm2:ch1',
 'mono-up-ch2': 'qbpm:oh:qbpm2:ch2',
 'mono-up-ch3': 'qbpm:oh:qbpm2:ch3',
@@ -78,8 +87,8 @@ all_keys = {**motorKey, **qbpm, **qbpm_pos, **mpccd, **mpccd_pos}
 
 
 #########################################################
-folder_stem_images = '/xfel/ffs/dat/ue_191117_FXS/raw_data/h5/type=raw/run={:03d}/scan={:03d}/'
-file_stem_scalars = '/xfel/ffs/dat/ue_191117_FXS/raw_data/h5/type=measurement/run={:03d}/scan={:03d}/p{:04d}.h5'
+folder_stem_images = '/xfel/ffs/dat/ue_191123_FXS/raw_data/h5/type=raw/run={:03d}/scan={:03d}/'
+file_stem_scalars = '/xfel/ffs/dat/ue_191123_FXS/raw_data/h5/type=measurement/run={:03d}/scan={:03d}/p{:04d}.h5'
 
 run_no = 13
 scan_no = 1
@@ -93,14 +102,17 @@ def get_points(folder_stem_images, run_no, scan_no=1):
 def read_data(run_no, point_no, scan_no=1,
               folder_stem_images=folder_stem_images,
               file_stem_scalars=file_stem_scalars,
-             mean_images=True):
+             mean_images=True,
+              min_threshold=min_threshold,
+             ADU_per_photon=ADU_per_photon,
+              background_path = background_path):
 
-    f_images = h5file(os.path.join(folder_stem_images.format(run_no, scan_no) + 'p{:04d}.h5'.format(point_no)))
+    f_images = h5py.File(os.path.join(folder_stem_images.format(run_no, scan_no) + 'p{:04d}.h5'.format(point_no)), 'r')
     df_scalars_all = pd.read_hdf(file_stem_scalars.format(run_no, scan_no, point_no))
     
     try:
-        tags = f_images['mpccd1/image/axis1'][()]
-    except NameError:
+        tags = f_images['detector/eh1/mpccd1/ph/image/axis1'][()]
+    except KeyError:
         print("No image data!")
         return None, None, None, None
     
@@ -121,12 +133,17 @@ def read_data(run_no, point_no, scan_no=1,
     df_off = df_off_full_names.rename(columns={v:k for k, v in all_keys.items()})
     df_off = df_off[get]
 
-    # images = da.from_array(f_images['detector/eh1/mpccd1/image/block0_values'])
-    # image_on, image_off = (
-    #     da.compute(images[choose_laser_on.values, : :].mean(0),
-    #               images[choose_laser_off.values, : :].mean(0))
-    #)
-    images = f_images['detector/eh1/mpccd1/image/block0_values']
+    t0 = time.time()
+    images = f_images['detector/eh1/mpccd1/image/block0_values'][()]
+    
+    try:
+        background = np.load(background_path)
+        images = images - background[np.newaxis, :, :]
+    except FileNotFoundError:
+        print("no background subtraction")
+        pass
+    images[images < min_threshold] = 0
+    images = images / ADU_per_photon
     
     if mean_images:
         image_on = images[choose_laser_on.values, :, :].mean(0)
@@ -134,7 +151,11 @@ def read_data(run_no, point_no, scan_no=1,
     else:
         image_on = images[choose_laser_on.values, :, :]
         image_off = images[choose_laser_off.values, :, :]
-    
+
+    t1 = time.time()
+
+    total = t1-t0
+    print("Image processing took {:.1f} s".format(total))
     return df_on, df_off, image_on, image_off
 
 out_folder = '/xfel/ffs/dat/ue_191123_FXS/reduced'
@@ -181,7 +202,11 @@ def write_data(run_no, point_no,
 def read_write_run(run_no, scan_no=1,
               folder_stem_images=folder_stem_images,
               file_stem_scalars=file_stem_scalars,
-               out_folder=out_folder, points=None):
+               out_folder=out_folder, points=None,
+                   min_threshold=min_threshold,
+                   ADU_per_photon=ADU_per_photon,
+                   background_path = background_path,
+                  ):
     
     path_on = os.path.join(out_folder, 'run={:03d}_scan={:03d}_on.h5'.format(run_no, scan_no))
     f_on = h5py.File(path_on, 'a', libver='latest')
@@ -194,7 +219,9 @@ def read_write_run(run_no, scan_no=1,
         print("point {}".format(point_no))
         df_on, df_off, image_on, image_off = read_data(run_no, point_no, scan_no=scan_no,
                                     folder_stem_images=folder_stem_images,
-                                    file_stem_scalars=file_stem_scalars)
+                                    file_stem_scalars=file_stem_scalars,
+                                                       min_threshold=min_threshold,
+                                                       ADU_per_photon=ADU_per_photon)
         
         if any([obj is None for obj in [df_on, df_off, image_on, image_off]]):
             continue
