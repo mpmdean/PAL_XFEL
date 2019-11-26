@@ -51,7 +51,7 @@ qbpm = {
 'pd1-ch1': 'pd:es:pd1:ch1',
 'pd1-ch2': 'pd:es:pd1:ch2',
 'pd1-ch3': 'pd:es:pd1:ch3',
-'pd1-ch4': 'pd:es:pd1:ch4'
+'pd1-ch4': 'pd:es:pd1:ch4'   
 }
 
 # beam positions
